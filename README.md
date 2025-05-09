@@ -2,6 +2,8 @@
 Plex Playlist Downloader
 This Python script was written with the help of Google Gemini.
 
+Currently the script is only for Windows machines with python installed.
+
 The script connects to a Plex server using your Plex token.  You choose where the downloaded playlists are saved.
 Once you make the initial connection, all of your playlists will be analyzed and listed with the number of items and total size.
 You have the option to download a music or video playlist.  You select the playlist, then download it to the location you provided earlier.
