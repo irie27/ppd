@@ -19,7 +19,7 @@ except ImportError:
 
 # === CONFIGURATION ===
 LOG_FILE = 'plex_downloader.log'
-CONFIG_FILE = 'plex_downloader_config.txt'
+CONFIG_FILE = 'plex_downloader_config.json'
 PLAYLIST_CACHE_FILE = 'playlists_cache.json' # File to store playlist data
 PLEX_BASE_URL = ''
 PLEX_TOKEN = ''
@@ -31,7 +31,7 @@ WINDOW_HEIGHT = 650
 logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-def check_and_install_module(module_name, pip_check=False):
+def check_and_install_module(module_name): # pip_check parameter removed
     try:
         __import__(module_name)
         return True
@@ -39,13 +39,15 @@ def check_and_install_module(module_name, pip_check=False):
         print(f"{module_name} is not installed. Attempting to install...")
         logging.info(f"{module_name} is not installed. Attempting to install...")
         try:
-            if pip_check:
-                try:
-                    subprocess.check_call(['pip', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                except subprocess.CalledProcessError:
-                    print("Error: pip is not installed or not configured correctly. Please install pip and try again.")
-                    logging.error("pip is not installed or not configured correctly.")
-                    return False
+            # Always check for pip availability if module import failed
+            try:
+                subprocess.check_call(['pip', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError:
+                print("Error: pip is not installed or not configured correctly. Please install pip and try again.")
+                logging.error("pip is not installed or not configured correctly.")
+                return False
+            
+            # Proceed with installing the module using pip
             subprocess.check_call(['pip', 'install', module_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"{module_name} successfully installed. Please restart the application if you encountered an import error previously.")
             logging.info(f"{module_name} successfully installed.")
@@ -62,14 +64,27 @@ def check_and_install_module(module_name, pip_check=False):
             return False
 
 def check_and_install_plexapi():
-    if not check_and_install_module('plexapi', pip_check=True):
-        return False
+    if not check_and_install_module('plexapi'):
+        return False # plexapi is not usable
+
+    # At this point, 'plexapi' module should be installed and loadable.
+    # Re-import PlexServer and NotFound to ensure we're using the
+    # (potentially newly) installed version's symbols.
     global PlexServer, NotFound
-    if PlexServer is None:
+    try:
+        # Attempt to import the specific names.
         from plexapi.server import PlexServer
-    if NotFound is None:
         from plexapi.exceptions import NotFound
-    return True
+        logging.info("Successfully re-imported PlexServer and NotFound from plexapi.")
+        return True
+    except ImportError as e:
+        # This would be unexpected if check_and_install_module truly succeeded
+        # and plexapi is a valid install.
+        print(f"Error: plexapi is installed, but failed to import PlexServer/NotFound symbols. Details: {e}")
+        logging.error(f"plexapi is installed, but failed to import PlexServer/NotFound symbols. Details: {e}")
+        PlexServer = None # Ensure they are None if this secondary import fails
+        NotFound = None
+        return False
 
 
 def check_and_install_tkinter():
@@ -155,6 +170,7 @@ class PlexDownloaderGUI:
 
         self.cache_successfully_loaded = False
         self.live_data_fetched_this_session = False
+        self.source_file_access_warning_shown = False
 
         self.load_config()
 
@@ -579,6 +595,7 @@ class PlexDownloaderGUI:
             return
 
         self.stop_download = False
+        self.source_file_access_warning_shown = False # Reset flag here
         self.download_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.download_thread = Thread(target=self.download_playlist_worker, args=(actual_playlist_object, download_dir, selected_media_type), daemon=True)
@@ -645,6 +662,16 @@ class PlexDownloaderGUI:
                     error_msg = f"File not found on this system: {source_file_path_on_server}. Ensure Plex media paths are accessible."
                     logging.error(error_msg + f" (For item: {item_title_for_log})")
                     self.master.after(0, self.file_progress_label.config, {"text": f"Item {i+1}/{total_items}: ⚠️ File not found: {os.path.basename(source_file_path_on_server)}. Skipping."})
+                    if not self.source_file_access_warning_shown:
+                        detailed_warning = (f"Warning: Source file '{os.path.basename(source_file_path_on_server)}' "
+                                            f"not found on this system. This script requires direct file system "
+                                            f"access to Plex media files. If this issue persists for multiple files, "
+                                            f"please ensure that the file paths reported by Plex are correctly "
+                                            f"mounted and accessible with the necessary read permissions by the "
+                                            f"user running this script.")
+                        # Call self.update_progress_label through self.master.after
+                        self.master.after(0, self.update_progress_label, detailed_warning)
+                        self.source_file_access_warning_shown = True
                     if i + 1 == total_items : self.master.after(0, self.overall_progress_bar.config, {"value": i + 1})
                     continue
 
